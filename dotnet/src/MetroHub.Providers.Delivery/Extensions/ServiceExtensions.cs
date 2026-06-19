@@ -1,6 +1,7 @@
 using MetroHub.Providers.Delivery.Configuration;
 using MetroHub.Providers.Delivery.Interfaces;
 using MetroHub.Providers.Delivery.Providers;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace MetroHub.Providers.Delivery.Extensions;
@@ -16,7 +17,7 @@ public static class ServiceExtensions
     /// // ShipDay
     /// services.AddDeliveryDispatch(o => o.UseShipDay(cfg => cfg.ApiKey = "…"));
     ///
-    /// // Fleetbase
+    /// // Fleetbase (self-hosted)
     /// services.AddDeliveryDispatch(o => o.UseFleetbase(cfg =>
     /// {
     ///     cfg.ApiKey  = "…";
@@ -39,6 +40,47 @@ public static class ServiceExtensions
             ProviderKind.Fleetbase => RegisterFleetbase(services, options.FleetbaseConfig!),
             _ => throw new InvalidOperationException(
                 "No delivery provider selected. Call UseShipDay() or UseFleetbase() inside AddDeliveryDispatch.")
+        };
+    }
+
+    /// <summary>
+    /// Registers <see cref="IDeliveryDispatch"/> driven by <c>IConfiguration</c>.
+    /// Reads the <c>Delivery</c> section; the required key is <c>Delivery__Provider</c>
+    /// (case-insensitive: <c>ShipDay</c> or <c>Fleetbase</c>).
+    /// <list type="bullet">
+    ///   <item><c>Delivery__Provider=ShipDay</c> → also reads <c>Delivery__ApiKey</c></item>
+    ///   <item><c>Delivery__Provider=Fleetbase</c> → also reads <c>Delivery__ApiKey</c> + <c>Delivery__BaseUrl</c></item>
+    /// </list>
+    /// When <c>Delivery__Provider</c> is absent or empty the registration is skipped and
+    /// <see cref="IDeliveryDispatch"/> is NOT registered — callers that require it will fail
+    /// at DI resolution time with a clear "not registered" message.
+    /// </summary>
+    public static IServiceCollection AddDeliveryDispatch(
+        this IServiceCollection services,
+        IConfiguration configuration)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(configuration);
+
+        var section = configuration.GetSection("Delivery");
+        var provider = section["Provider"];
+
+        if (string.IsNullOrWhiteSpace(provider))
+            return services; // fail-soft: no provider configured, dispatch stays unregistered
+
+        return provider.Trim().ToUpperInvariant() switch
+        {
+            "SHIPDAY" => services.AddDeliveryDispatch(o => o.UseShipDay(cfg =>
+            {
+                cfg.ApiKey = section["ApiKey"] ?? string.Empty;
+            })),
+            "FLEETBASE" => services.AddDeliveryDispatch(o => o.UseFleetbase(cfg =>
+            {
+                cfg.ApiKey  = section["ApiKey"]  ?? string.Empty;
+                cfg.BaseUrl = section["BaseUrl"] ?? string.Empty;
+            })),
+            _ => throw new InvalidOperationException(
+                $"Unknown Delivery:Provider value '{provider}'. Expected 'ShipDay' or 'Fleetbase'.")
         };
     }
 

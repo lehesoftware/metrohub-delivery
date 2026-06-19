@@ -1,0 +1,246 @@
+name: Release
+run-name: "${{ github.event_name == 'pull_request' && format('Release - PR #{0} preview ({1} -> {2})', github.event.pull_request.number, github.head_ref, github.base_ref) || format('Release - push to {0}', github.ref_name) }}"
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - dotnet/**
+      - .github/workflows/release.yml
+  pull_request:
+    branches:
+      - feature/wip
+      - develop
+      - main
+    paths:
+      - dotnet/**
+      - .github/workflows/release.yml
+    types:
+      - opened
+      - synchronize
+      - reopened
+      - ready_for_review
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  SOLUTION_FILE: MetroHub.Providers.Delivery.slnx
+
+jobs:
+  release-preview:
+    if: >-
+      github.event_name == 'pull_request'
+      && github.event.pull_request.draft == false
+      && github.event.pull_request.head.repo.full_name == github.repository
+    name: Release preview (semantic-release --no-ci --dry-run)
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_VERSION: "10.0.x"
+      NODE_VERSION: "24.10.0"
+    defaults:
+      run:
+        shell: bash
+        working-directory: dotnet
+    concurrency:
+      group: release-preview-${{ github.workflow }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    permissions:
+      contents: read
+      packages: read
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Release preview gate
+        id: gate
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if ! git rev-parse --verify "$PR_HEAD_SHA^{commit}" >/dev/null 2>&1; then
+            git fetch origin "+refs/pull/${PR_NUMBER}/head"
+          fi
+          msg="$(git show -s --format=%B "$PR_HEAD_SHA")"
+          if printf '%s' "$msg" | grep -qiF '[skip ci]'; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Setup .NET SDK
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Node.js
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies (semantic-release)
+        if: steps.gate.outputs.run == 'true'
+        run: npm ci --ignore-scripts
+
+      - name: Verify (.NET)
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          set -euo pipefail
+          dotnet restore "$SOLUTION_FILE"
+          dotnet build "$SOLUTION_FILE" -c Release --no-restore
+          dotnet test "$SOLUTION_FILE" -c Release --no-build --verbosity normal
+
+      - name: Release preview (semantic-release --no-ci --dry-run)
+        if: steps.gate.outputs.run == 'true'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+          GITHUB_REF: refs/heads/${{ github.base_ref }}
+          GITHUB_HEAD_REF: ${{ github.base_ref }}
+          GITHUB_REF_NAME: ${{ github.base_ref }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git fetch origin "$BASE_REF"
+          if git show "origin/${BASE_REF}:dotnet/release.preview.config.cjs" > release.preview.config.trusted.cjs 2>/dev/null; then
+            echo "::notice::Using release.preview.config.cjs from origin/${BASE_REF}"
+          else
+            node -e 'require("fs").writeFileSync("release.preview.config.trusted.cjs", [
+              "module.exports = {",
+              "  branches: [",
+              "    \"main\",",
+              "    { name: \"develop\", prerelease: \"beta\" },",
+              "    { name: \"feature/wip\", prerelease: \"wip\" },",
+              "  ],",
+              "  plugins: [\"@semantic-release/commit-analyzer\", \"@semantic-release/release-notes-generator\"],",
+              "};",
+              "",
+            ].join("\n"));'
+          fi
+          tmp="${RUNNER_TEMP:-/tmp}/release.config.cjs.bak"
+          restore() { [ -f "${tmp}" ] && mv "${tmp}" release.config.cjs; rm -f release.preview.config.trusted.cjs; }
+          trap restore EXIT
+          mv release.config.cjs "${tmp}"
+          npx semantic-release --no-ci --dry-run --extends ./release.preview.config.trusted.cjs
+
+  release:
+    if: >-
+      github.event_name == 'push'
+      && github.ref == 'refs/heads/main'
+      && (github.event.head_commit == null
+      || !contains(github.event.head_commit.message, '[skip ci]'))
+    runs-on: ubuntu-latest
+    env:
+      DOTNET_VERSION: "10.0.x"
+      NODE_VERSION: "24.10.0"
+    concurrency:
+      group: release-${{ github.workflow }}-main
+      cancel-in-progress: false
+    permissions:
+      actions: write
+      contents: write
+      issues: write
+      packages: write
+      pull-requests: write
+    defaults:
+      run:
+        shell: bash
+        working-directory: dotnet
+
+    steps:
+      - name: Normalize MetroHub Publish Client ID
+        working-directory: ${{ github.workspace }}
+        env:
+          RAW_CLIENT_ID_FROM_VAR: ${{ vars.PUBLISH_GH_APP_CLIENT_ID }}
+          RAW_CLIENT_ID_FROM_SECRET: ${{ secrets.PUBLISH_GH_APP_CLIENT_ID }}
+        run: |
+          set -euo pipefail
+          trim() { printf '%s' "${1:-}" | tr -d '\r' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+          trimmed_var="$(trim "${RAW_CLIENT_ID_FROM_VAR:-}")"
+          trimmed_secret="$(trim "${RAW_CLIENT_ID_FROM_SECRET:-}")"
+          trimmed="${trimmed_var:-$trimmed_secret}"
+          if [ -n "$trimmed" ] && [[ ! "$trimmed" =~ ^Iv[A-Za-z0-9._-]+$ ]]; then
+            echo "::error title=Invalid PUBLISH_GH_APP_CLIENT_ID::Value does not look like a GitHub App Client ID."
+            exit 1
+          fi
+          printf 'PUBLISH_GH_APP_CLIENT_ID_RESOLVED=%s\n' "$trimmed" >> "$GITHUB_ENV"
+
+      - name: Require MetroHub Publish app credentials
+        id: require_app
+        working-directory: ${{ github.workspace }}
+        env:
+          CLIENT_ID: ${{ env.PUBLISH_GH_APP_CLIENT_ID_RESOLVED }}
+          APP_ID: ${{ vars.PUBLISH_GH_APP_ID }}
+          PRIVATE_KEY: ${{ secrets.PUBLISH_GH_APP_PRIVATE_KEY }}
+        run: |
+          if [ -z "$PRIVATE_KEY" ]; then
+            echo "::error title=MetroHub Publish credentials missing::Set secret PUBLISH_GH_APP_PRIVATE_KEY."
+            exit 1
+          fi
+          if [ -z "$CLIENT_ID" ] && [ -z "$APP_ID" ]; then
+            echo "::error title=MetroHub Publish credentials missing::Set PUBLISH_GH_APP_CLIENT_ID variable or secret, plus PUBLISH_GH_APP_PRIVATE_KEY secret."
+            exit 1
+          fi
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Mint MetroHub Publish app token
+        id: publish-app-token
+        if: steps.require_app.outputs.ok == 'true' && env.PUBLISH_GH_APP_CLIENT_ID_RESOLVED != ''
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ env.PUBLISH_GH_APP_CLIENT_ID_RESOLVED }}
+          private-key: ${{ secrets.PUBLISH_GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Mint MetroHub Publish app token (legacy App ID)
+        id: publish-app-token-legacy
+        if: steps.require_app.outputs.ok == 'true' && env.PUBLISH_GH_APP_CLIENT_ID_RESOLVED == ''
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.PUBLISH_GH_APP_ID }}
+          private-key: ${{ secrets.PUBLISH_GH_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+          token: ${{ steps.publish-app-token.outputs.token || steps.publish-app-token-legacy.outputs.token }}
+
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Setup Node.js (with npm cache)
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: dotnet/package-lock.json
+
+      - name: Install dependencies (semantic-release)
+        run: npm ci
+
+      - name: Verify (.NET)
+        run: npm run verify-dotnet
+
+      - name: Release (semantic-release)
+        env:
+          GITHUB_TOKEN: ${{ steps.publish-app-token.outputs.token || steps.publish-app-token-legacy.outputs.token }}
+          NUGET_AUTH_TOKEN: ${{ github.token }}
+          NUGET_GITHUB_OWNER: ${{ vars.NUGET_GITHUB_OWNER }}
+          NUGET_FEED_URL: ${{ vars.NUGET_FEED_URL }}
+          NUGET_GITHUB_USERNAME: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          git checkout -B main HEAD
+          npx semantic-release

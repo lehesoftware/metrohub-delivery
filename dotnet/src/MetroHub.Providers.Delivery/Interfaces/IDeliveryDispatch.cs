@@ -6,7 +6,7 @@ namespace MetroHub.Providers.Delivery.Interfaces;
 /// Platform-neutral delivery dispatch contract. Implementations push orders to a
 /// delivery platform (ShipDay, Fleetbase, …) and keep them in sync as driver notes
 /// are added or updated. The concrete provider is chosen at startup via
-/// <see cref="Extensions.ServiceExtensions.AddDeliveryDispatch"/>.
+/// <c>AddDeliveryDispatch</c> in <see cref="Extensions.ServiceExtensions"/>.
 /// </summary>
 public interface IDeliveryDispatch
 {
