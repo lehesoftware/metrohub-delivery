@@ -1,0 +1,38 @@
+name: Validate
+
+on:
+  pull_request:
+    branches: [main, develop, feature/wip]
+    paths:
+      - "dotnet/**"
+      - ".github/workflows/validate.yml"
+
+jobs:
+  build-and-test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.x"
+
+      - name: Restore
+        working-directory: dotnet
+        run: dotnet restore
+
+      - name: Build
+        working-directory: dotnet
+        run: dotnet build -c Release --no-restore
+
+      - name: Test
+        working-directory: dotnet
+        run: dotnet test -c Release --no-build --logger trx --results-directory TestResults
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: dotnet/TestResults

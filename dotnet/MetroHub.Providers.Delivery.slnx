@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/MetroHub.Providers.Delivery/MetroHub.Providers.Delivery.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/MetroHub.Providers.Delivery.UnitTests/MetroHub.Providers.Delivery.UnitTests.csproj" />
+  </Folder>
+</Solution>

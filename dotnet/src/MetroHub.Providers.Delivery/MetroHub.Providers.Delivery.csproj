@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <PackageId>MetroHub.Providers.Delivery</PackageId>
+    <Version>$(MetroHubProvidersDeliveryVersion)</Version>
+    <Authors>Lehe Software</Authors>
+    <Description>Plug-and-play delivery dispatch provider for MetroHub (ShipDay, Fleetbase).</Description>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <RepositoryUrl>https://github.com/lehesoftware/metrohub-delivery</RepositoryUrl>
+    <PackageTags>delivery;dispatch;shipday;fleetbase;metrohub</PackageTags>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="10.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.*" />
+    <PackageReference Include="Microsoft.Extensions.Options" Version="10.0.*" />
+  </ItemGroup>
+
+</Project>
