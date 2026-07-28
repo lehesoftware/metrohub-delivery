@@ -1,5 +1,5 @@
 ---
-description: Branch ladder — each task on its own claude/<name> branch; promotion toward main only via PRs
+description: Branch ladder — each task on its own claude/<name> branch (promotion review fixes on promote/*); toward main only via PRs
 alwaysApply: true
 ---
 
