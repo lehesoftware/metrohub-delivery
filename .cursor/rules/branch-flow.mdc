@@ -1,0 +1,27 @@
+---
+description: Branch ladder — each task on its own claude/<name> branch (promotion review fixes on promote/*); toward main only via PRs
+alwaysApply: true
+---
+
+# Branch flow (metrohub-delivery)
+
+**Agent work** (commits, pushes, agent-implemented fixes) is made on a **per-task ephemeral `claude/<name>` branch**, then pushed and PR'd straight to **`feature/wip`**. Do **not** commit or push implementation work directly to **`main`**, **`develop`**, or **`feature/wip`**. (The retired shared **`users/sunil/wip`** funnel is not used here — this repo uses the `claude/<name>` model, matching the other MetroHub repos and `dp-shop`.)
+
+**Promotion ladder** (toward `main`, each step by **pull request** only):
+
+```text
+main  ←  develop  ←  feature/wip  ←  claude/<name>
+```
+
+- Before opening the stage-1 PR from **`claude/<name>`**, run **`git fetch origin`** and merge **`origin/feature/wip`** (the PR base) into **`claude/<name>`**. Merging **`origin/develop`** and **`origin/main`** as well keeps the branch current with every tip, but can pull `develop`/`main`-ahead commits into the stage-1 diff — so for a **docs-only or narrow** stage-1 PR, prefer syncing **only `feature/wip`** to keep the diff tight. Inbound sync only — never merge `claude/<name>` outward.
+- Open the stage-1 PR **`claude/<name>` → `feature/wip`**; do **not** target `develop` or `main` from `claude/<name>`.
+- **Keep `claude/<name>` until the change fully promotes**; delete the branch (local + origin) only after it lands at its final target.
+
+**Promotion up the ladder — `feature/wip → develop → main` (settled 2026-07-28).** A **separate flow** from the stage-1 dev lane above; promotion review fixes land **directly on the promote branch** (this replaces the older "fresh `claude/<name>` reflow" for promotions). Promotions merge as **merge commits, never squash**.
+
+- **Stage 1 (`feature/wip → develop`):** branch **`promote/wip-*`** off `feature/wip`; PR `promote/wip-* → develop`; fix all bot comments **directly on `promote/wip-*`**; merge into `develop`.
+- **Stage 2 (`develop → main`):** branch **`promote/develop-*`** off `develop`; PR `promote/develop-* → main`; fix directly on `promote/develop-*`; merge into `main`.
+- **Stage 3 (reconcile):** branch **`claude/*`** = merge of `main` + `develop` + `feature/wip`; PR **`claude/* → feature/wip`** so `feature/wip` is **caught up with** `develop` and `main` (same content — the merge commit means the refs aren't literally identical). This reconcile is the **deliberate down-merge** that re-levels `feature/wip` after a promotion; promotions themselves always flow **up** (`feature/wip → develop → main`), and no other PR merges `develop`/`main` *into* `feature/wip` on purpose.
+- **Oversized promotions:** slice into range-based `promote/wip-*` branches (one per slice SHA), merge to `develop` in order; run **stages 2 & 3 once** after all slices land.
+
+GitHub workflows are driven via the shared MetroHub GitHub MCP server (registered in the client as **`metrohub-gh-mcp`** — the same server used across all MetroHub repos), not the `gh` CLI.
